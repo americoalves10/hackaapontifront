@@ -14,71 +14,67 @@ interface Analysis {
 }
 
 export default function Home() {
-  const [image, setImage] = useState<string | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [compressionInfo, setCompressionInfo] = useState<string | null>(null);
 
-  const compressImage = (file: File): Promise<File> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const img = new Image();
-        img.onload = () => {
-          try {
-            const canvas = document.createElement('canvas');
-            const MAX_WIDTH = 400;
-            const MAX_HEIGHT = 400;
-            
-            let width = img.width;
-            let height = img.height;
-            
-            if (width > height) {
-              if (width > MAX_WIDTH) {
-                height = (height * MAX_WIDTH) / width;
-                width = MAX_WIDTH;
-              }
-            } else {
-              if (height > MAX_HEIGHT) {
-                width = (width * MAX_HEIGHT) / height;
-                height = MAX_HEIGHT;
-              }
-            }
-            
-            canvas.width = width;
-            canvas.height = height;
-            
-            const ctx = canvas.getContext('2d');
-            if (!ctx) {
-              reject(new Error('Não foi possível criar contexto do canvas'));
+  // ✨ COMPRESSÃO OTIMIZADA PARA MEMÓRIA (usa createImageBitmap + URL.createObjectURL)
+  const compressImage = async (file: File): Promise<File> => {
+    // Cria URL temporária (não carrega a imagem inteira em memória)
+    const tempUrl = URL.createObjectURL(file);
+    
+    try {
+      // createImageBitmap é MUITO mais eficiente que new Image()
+      const bitmap = await createImageBitmap(file);
+      
+      const canvas = document.createElement('canvas');
+      const MAX_SIZE = 500;
+      
+      let width = bitmap.width;
+      let height = bitmap.height;
+      
+      // Redimensiona mantendo proporção
+      if (width > height) {
+        if (width > MAX_SIZE) {
+          height = (height * MAX_SIZE) / width;
+          width = MAX_SIZE;
+        }
+      } else {
+        if (height > MAX_SIZE) {
+          width = (width * MAX_SIZE) / height;
+          height = MAX_SIZE;
+        }
+      }
+      
+      canvas.width = width;
+      canvas.height = height;
+      
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas não suportado');
+      
+      ctx.drawImage(bitmap, 0, 0, width, height);
+      bitmap.close(); // Libera memória imediatamente
+      
+      // Converte para Blob com qualidade baixa
+      return new Promise((resolve, reject) => {
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              reject(new Error('Falha ao comprimir'));
               return;
             }
-            
-            ctx.drawImage(img, 0, 0, width, height);
-            
-            canvas.toBlob(
-              (blob) => {
-                if (!blob) {
-                  reject(new Error('Falha ao comprimir imagem'));
-                  return;
-                }
-                resolve(new File([blob], "compressed.jpg", { type: "image/jpeg" }));
-              },
-              "image/jpeg",
-              0.4
-            );
-          } catch (err) {
-            reject(err);
-          }
-        };
-        img.onerror = () => reject(new Error('Falha ao carregar imagem'));
-        img.src = event.target?.result as string;
-      };
-      reader.onerror = () => reject(new Error('Falha ao ler arquivo'));
-      reader.readAsDataURL(file);
-    });
+            resolve(new File([blob], "compressed.jpg", { type: "image/jpeg" }));
+          },
+          "image/jpeg",
+          0.5
+        );
+      });
+    } finally {
+      URL.revokeObjectURL(tempUrl);
+    }
   };
 
   const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -88,27 +84,33 @@ export default function Home() {
     setLoading(true);
     setError(null);
     setCompressionInfo(null);
+    setAnalysis(null);
     
     try {
+      // 🚨 LIMITA TAMANHO MÁXIMO (5MB) - evita estouro de memória
+      const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+      if (selectedFile.size > MAX_FILE_SIZE) {
+        throw new Error(`Foto muito grande (${(selectedFile.size / 1024 / 1024).toFixed(1)}MB). Tire uma foto mais próxima ou com menos luz.`);
+      }
+      
       const originalSizeMB = (selectedFile.size / 1024 / 1024).toFixed(2);
       console.log(`📸 Imagem original: ${originalSizeMB}MB`);
       
+      // Comprime
       const compressedFile = await compressImage(selectedFile);
       const compressedSizeKB = (compressedFile.size / 1024).toFixed(2);
       console.log(`✅ Imagem comprimida: ${compressedSizeKB}KB`);
       
-      setCompressionInfo(`Original: ${originalSizeMB}MB → Comprimida: ${compressedSizeKB}KB`);
-      
       setFile(compressedFile);
       
-      const reader = new FileReader();
-      reader.onloadend = () => setImage(reader.result as string);
-      reader.readAsDataURL(compressedFile);
+      // Preview usando URL.createObjectURL (MUITO mais leve que base64)
+      const previewUrl = URL.createObjectURL(compressedFile);
+      setImageUrl(previewUrl);
       
-      setAnalysis(null);
+      setCompressionInfo(`Original: ${originalSizeMB}MB → Comprimida: ${compressedSizeKB}KB`);
     } catch (err: any) {
-      console.error("Erro ao comprimir", err);
-      setError(`Erro ao processar a imagem: ${err.message}`);
+      console.error("Erro ao processar", err);
+      setError(err.message || 'Erro ao processar a imagem.');
     } finally {
       setLoading(false);
     }
@@ -124,9 +126,6 @@ export default function Home() {
 
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-      console.log(`📤 Enviando para: ${apiUrl}/reports/analyze`);
-      console.log(`📦 Tamanho do payload: ${(file.size / 1024).toFixed(2)}KB`);
-      
       const { data } = await axios.post(`${apiUrl}/reports/analyze`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 30000,
@@ -137,9 +136,7 @@ export default function Home() {
       if (err.code === 'ECONNABORTED') {
         setError('Tempo esgotado. Tente novamente.');
       } else if (err.response?.status === 500) {
-        setError('Erro no servidor. Tente uma foto menor.');
-      } else if (err.response?.status === 413) {
-        setError('Imagem muito grande. Tente outra foto.');
+        setError('Erro no servidor. Tente outra foto.');
       } else {
         setError('Erro ao analisar. Verifique a conexão.');
       }
@@ -181,9 +178,9 @@ export default function Home() {
             </div>
           )}
 
-          {image && (
+          {imageUrl && (
             <>
-              <img src={image} alt="Preview" className="rounded-xl w-full shadow-2xl" />
+              <img src={imageUrl} alt="Preview" className="rounded-xl w-full shadow-2xl" />
               <button
                 onClick={analyzeImage}
                 disabled={loading}
