@@ -22,33 +22,62 @@ export default function Home() {
   const [compressionInfo, setCompressionInfo] = useState<string | null>(null);
 
   const compressImage = (file: File): Promise<File> => {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.readAsDataURL(file);
       reader.onload = (event) => {
         const img = new Image();
-        img.src = event.target?.result as string;
         img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 600; // Reduz ainda mais para 600px
-          const scaleSize = MAX_WIDTH / img.width;
-          
-          canvas.width = MAX_WIDTH;
-          canvas.height = img.height * scaleSize;
-          
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
-          
-          // Qualidade 50% (reduz de ~10MB para ~50KB)
-          canvas.toBlob(
-            (blob) => {
-              resolve(new File([blob!], "compressed.jpg", { type: "image/jpeg" }));
-            },
-            "image/jpeg",
-            0.5
-          );
+          try {
+            const canvas = document.createElement('canvas');
+            const MAX_WIDTH = 400;
+            const MAX_HEIGHT = 400;
+            
+            let width = img.width;
+            let height = img.height;
+            
+            if (width > height) {
+              if (width > MAX_WIDTH) {
+                height = (height * MAX_WIDTH) / width;
+                width = MAX_WIDTH;
+              }
+            } else {
+              if (height > MAX_HEIGHT) {
+                width = (width * MAX_HEIGHT) / height;
+                height = MAX_HEIGHT;
+              }
+            }
+            
+            canvas.width = width;
+            canvas.height = height;
+            
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              reject(new Error('Não foi possível criar contexto do canvas'));
+              return;
+            }
+            
+            ctx.drawImage(img, 0, 0, width, height);
+            
+            canvas.toBlob(
+              (blob) => {
+                if (!blob) {
+                  reject(new Error('Falha ao comprimir imagem'));
+                  return;
+                }
+                resolve(new File([blob], "compressed.jpg", { type: "image/jpeg" }));
+              },
+              "image/jpeg",
+              0.4
+            );
+          } catch (err) {
+            reject(err);
+          }
         };
+        img.onerror = () => reject(new Error('Falha ao carregar imagem'));
+        img.src = event.target?.result as string;
       };
+      reader.onerror = () => reject(new Error('Falha ao ler arquivo'));
+      reader.readAsDataURL(file);
     });
   };
 
@@ -61,24 +90,25 @@ export default function Home() {
     setCompressionInfo(null);
     
     try {
-      const originalSize = (selectedFile.size / 1024 / 1024).toFixed(2);
-      console.log(`📸 Imagem original: ${originalSize}MB`);
+      const originalSizeMB = (selectedFile.size / 1024 / 1024).toFixed(2);
+      console.log(`📸 Imagem original: ${originalSizeMB}MB`);
       
       const compressedFile = await compressImage(selectedFile);
-      const compressedSize = (compressedFile.size / 1024).toFixed(2);
-      console.log(`✅ Imagem comprimida: ${compressedSize}KB`);
+      const compressedSizeKB = (compressedFile.size / 1024).toFixed(2);
+      console.log(`✅ Imagem comprimida: ${compressedSizeKB}KB`);
       
-      setCompressionInfo(`Original: ${originalSize}MB → Comprimida: ${compressedSize}KB`);
+      setCompressionInfo(`Original: ${originalSizeMB}MB → Comprimida: ${compressedSizeKB}KB`);
       
       setFile(compressedFile);
+      
       const reader = new FileReader();
       reader.onloadend = () => setImage(reader.result as string);
       reader.readAsDataURL(compressedFile);
       
       setAnalysis(null);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Erro ao comprimir", err);
-      setError("Erro ao processar a imagem.");
+      setError(`Erro ao processar a imagem: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -94,9 +124,12 @@ export default function Home() {
 
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      console.log(`📤 Enviando para: ${apiUrl}/reports/analyze`);
+      console.log(`📦 Tamanho do payload: ${(file.size / 1024).toFixed(2)}KB`);
+      
       const { data } = await axios.post(`${apiUrl}/reports/analyze`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 30000, // 30 segundos de timeout
+        timeout: 30000,
       });
       setAnalysis(data);
     } catch (err: any) {
@@ -105,6 +138,8 @@ export default function Home() {
         setError('Tempo esgotado. Tente novamente.');
       } else if (err.response?.status === 500) {
         setError('Erro no servidor. Tente uma foto menor.');
+      } else if (err.response?.status === 413) {
+        setError('Imagem muito grande. Tente outra foto.');
       } else {
         setError('Erro ao analisar. Verifique a conexão.');
       }
