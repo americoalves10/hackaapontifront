@@ -20,16 +20,63 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // ✨ NOVA FUNÇÃO: Comprime a imagem no navegador antes de enviar
+  const compressImage = (file: File): Promise<File> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 800; // Reduz para 800px (suficiente para a IA)
+          const scaleSize = MAX_WIDTH / img.width;
+          
+          canvas.width = MAX_WIDTH;
+          canvas.height = img.height * scaleSize;
+          
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+          
+          // Converte para JPEG com 70% de qualidade (reduz de ~10MB para ~100KB)
+          canvas.toBlob(
+            (blob) => {
+              resolve(new File([blob!], "compressed_image.jpg", { type: "image/jpeg" }));
+            },
+            "image/jpeg",
+            0.7
+          );
+        };
+      };
+    });
+  };
+
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
 
-    setFile(selectedFile);
-    const reader = new FileReader();
-    reader.onloadend = () => setImage(reader.result as string);
-    reader.readAsDataURL(selectedFile);
-    setAnalysis(null);
-    setError(null);
+    setLoading(true); // Mostra carregamento durante a compressão
+    
+    try {
+      // 1. Comprime a imagem
+      const compressedFile = await compressImage(selectedFile);
+      console.log(`📉 Imagem comprimida de ${(selectedFile.size / 1024 / 1024).toFixed(2)}MB para ${(compressedFile.size / 1024).toFixed(2)}KB`);
+      
+      // 2. Atualiza o estado com a imagem leve
+      setFile(compressedFile);
+      const reader = new FileReader();
+      reader.onloadend = () => setImage(reader.result as string);
+      reader.readAsDataURL(compressedFile);
+      
+      setAnalysis(null);
+      setError(null);
+    } catch (err) {
+      console.error("Erro ao comprimir imagem", err);
+      setError("Erro ao processar a imagem. Tente outra.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const analyzeImage = async () => {
