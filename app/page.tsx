@@ -19,8 +19,8 @@ export default function Home() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [compressionInfo, setCompressionInfo] = useState<string | null>(null);
 
-    // ✨ NOVA FUNÇÃO: Comprime a imagem no navegador antes de enviar
   const compressImage = (file: File): Promise<File> => {
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -30,7 +30,7 @@ export default function Home() {
         img.src = event.target?.result as string;
         img.onload = () => {
           const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 800; // Reduz para 800px (suficiente para a IA)
+          const MAX_WIDTH = 600; // Reduz ainda mais para 600px
           const scaleSize = MAX_WIDTH / img.width;
           
           canvas.width = MAX_WIDTH;
@@ -39,13 +39,13 @@ export default function Home() {
           const ctx = canvas.getContext('2d');
           ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
           
-          // Converte para JPEG com 70% de qualidade (reduz de ~10MB para ~100KB)
+          // Qualidade 50% (reduz de ~10MB para ~50KB)
           canvas.toBlob(
             (blob) => {
-              resolve(new File([blob!], "compressed_image.jpg", { type: "image/jpeg" }));
+              resolve(new File([blob!], "compressed.jpg", { type: "image/jpeg" }));
             },
             "image/jpeg",
-            0.7
+            0.5
           );
         };
       };
@@ -56,24 +56,29 @@ export default function Home() {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
 
-    setLoading(true); // Mostra carregamento durante a compressão
+    setLoading(true);
+    setError(null);
+    setCompressionInfo(null);
     
     try {
-      // 1. Comprime a imagem
-      const compressedFile = await compressImage(selectedFile);
-      console.log(`📉 Imagem comprimida de ${(selectedFile.size / 1024 / 1024).toFixed(2)}MB para ${(compressedFile.size / 1024).toFixed(2)}KB`);
+      const originalSize = (selectedFile.size / 1024 / 1024).toFixed(2);
+      console.log(`📸 Imagem original: ${originalSize}MB`);
       
-      // 2. Atualiza o estado com a imagem leve
+      const compressedFile = await compressImage(selectedFile);
+      const compressedSize = (compressedFile.size / 1024).toFixed(2);
+      console.log(`✅ Imagem comprimida: ${compressedSize}KB`);
+      
+      setCompressionInfo(`Original: ${originalSize}MB → Comprimida: ${compressedSize}KB`);
+      
       setFile(compressedFile);
       const reader = new FileReader();
       reader.onloadend = () => setImage(reader.result as string);
       reader.readAsDataURL(compressedFile);
       
       setAnalysis(null);
-      setError(null);
     } catch (err) {
-      console.error("Erro ao comprimir imagem", err);
-      setError("Erro ao processar a imagem. Tente outra.");
+      console.error("Erro ao comprimir", err);
+      setError("Erro ao processar a imagem.");
     } finally {
       setLoading(false);
     }
@@ -91,11 +96,18 @@ export default function Home() {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
       const { data } = await axios.post(`${apiUrl}/reports/analyze`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 30000, // 30 segundos de timeout
       });
       setAnalysis(data);
     } catch (err: any) {
       console.error(err);
-      setError(err.response?.data?.message || 'Erro ao analisar. Verifique se o backend está rodando.');
+      if (err.code === 'ECONNABORTED') {
+        setError('Tempo esgotado. Tente novamente.');
+      } else if (err.response?.status === 500) {
+        setError('Erro no servidor. Tente uma foto menor.');
+      } else {
+        setError('Erro ao analisar. Verifique a conexão.');
+      }
     } finally {
       setLoading(false);
     }
@@ -127,6 +139,12 @@ export default function Home() {
               className="hidden" 
             />
           </label>
+
+          {compressionInfo && (
+            <div className="bg-green-900/50 border border-green-500 p-3 rounded-xl text-center">
+              <p className="text-green-200 text-sm">✅ {compressionInfo}</p>
+            </div>
+          )}
 
           {image && (
             <>
