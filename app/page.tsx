@@ -19,101 +19,26 @@ export default function Home() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [compressionInfo, setCompressionInfo] = useState<string | null>(null);
 
-  // ✨ COMPRESSÃO OTIMIZADA PARA MEMÓRIA (usa createImageBitmap + URL.createObjectURL)
-  const compressImage = async (file: File): Promise<File> => {
-    // Cria URL temporária (não carrega a imagem inteira em memória)
-    const tempUrl = URL.createObjectURL(file);
-    
-    try {
-      // createImageBitmap é MUITO mais eficiente que new Image()
-      const bitmap = await createImageBitmap(file);
-      
-      const canvas = document.createElement('canvas');
-      const MAX_SIZE = 500;
-      
-      let width = bitmap.width;
-      let height = bitmap.height;
-      
-      // Redimensiona mantendo proporção
-      if (width > height) {
-        if (width > MAX_SIZE) {
-          height = (height * MAX_SIZE) / width;
-          width = MAX_SIZE;
-        }
-      } else {
-        if (height > MAX_SIZE) {
-          width = (width * MAX_SIZE) / height;
-          height = MAX_SIZE;
-        }
-      }
-      
-      canvas.width = width;
-      canvas.height = height;
-      
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('Canvas não suportado');
-      
-      ctx.drawImage(bitmap, 0, 0, width, height);
-      bitmap.close(); // Libera memória imediatamente
-      
-      // Converte para Blob com qualidade baixa
-      return new Promise((resolve, reject) => {
-        canvas.toBlob(
-          (blob) => {
-            if (!blob) {
-              reject(new Error('Falha ao comprimir'));
-              return;
-            }
-            resolve(new File([blob], "compressed.jpg", { type: "image/jpeg" }));
-          },
-          "image/jpeg",
-          0.5
-        );
-      });
-    } finally {
-      URL.revokeObjectURL(tempUrl);
-    }
-  };
-
-  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
 
-    setLoading(true);
     setError(null);
-    setCompressionInfo(null);
     setAnalysis(null);
     
-    try {
-      // 🚨 LIMITA TAMANHO MÁXIMO (5MB) - evita estouro de memória
-      const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
-      if (selectedFile.size > MAX_FILE_SIZE) {
-        throw new Error(`Foto muito grande (${(selectedFile.size / 1024 / 1024).toFixed(1)}MB). Tire uma foto mais próxima ou com menos luz.`);
+    // Apenas uma validação leve de tamanho (limite de 15MB, suficiente para qualquer celular)
+    if (selectedFile.size > 15 * 1024 * 1024) {
+      setError('Foto muito grande. Tente aproximar o celular do objeto.');
+      return;
       }
-      
-      const originalSizeMB = (selectedFile.size / 1024 / 1024).toFixed(2);
-      console.log(`📸 Imagem original: ${originalSizeMB}MB`);
-      
-      // Comprime
-      const compressedFile = await compressImage(selectedFile);
-      const compressedSizeKB = (compressedFile.size / 1024).toFixed(2);
-      console.log(`✅ Imagem comprimida: ${compressedSizeKB}KB`);
-      
-      setFile(compressedFile);
-      
-      // Preview usando URL.createObjectURL (MUITO mais leve que base64)
-      const previewUrl = URL.createObjectURL(compressedFile);
-      setImageUrl(previewUrl);
-      
-      setCompressionInfo(`Original: ${originalSizeMB}MB → Comprimida: ${compressedSizeKB}KB`);
-    } catch (err: any) {
-      console.error("Erro ao processar", err);
-      setError(err.message || 'Erro ao processar a imagem.');
-    } finally {
-      setLoading(false);
-    }
+    
+    setFile(selectedFile);
+    
+    // URL.createObjectURL é APENAS um ponteiro. NÃO carrega a imagem na memória do JS.
+    // É super leve e funciona perfeitamente no mobile.
+    const previewUrl = URL.createObjectURL(selectedFile);
+    setImageUrl(previewUrl);
   };
 
   const analyzeImage = async () => {
@@ -122,23 +47,22 @@ export default function Home() {
     setError(null);
 
     const formData = new FormData();
+    // Envia o arquivo cru. O backend vai cuidar de comprimir com segurança.
     formData.append('image', file);
 
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
       const { data } = await axios.post(`${apiUrl}/reports/analyze`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 30000,
+        timeout: 30000, // 30 segundos
       });
       setAnalysis(data);
     } catch (err: any) {
       console.error(err);
       if (err.code === 'ECONNABORTED') {
-        setError('Tempo esgotado. Tente novamente.');
-      } else if (err.response?.status === 500) {
-        setError('Erro no servidor. Tente outra foto.');
+        setError('Tempo esgotado. Verifique sua conexão.');
       } else {
-        setError('Erro ao analisar. Verifique a conexão.');
+        setError('Erro ao analisar. Tente tirar a foto novamente.');
       }
     } finally {
       setLoading(false);
@@ -155,12 +79,13 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white p-6">
       <div className="max-w-2xl mx-auto">
-        <header className="mb-8">
-          <h1 className="text-5xl font-bold mb-2">🏛️ Voz Ativa</h1>
-          <p className="text-gray-400 text-lg">A IA que transforma sua foto em ação</p>
+        <header className="mb-8 text-center">
+          <h1 className="text-4xl font-bold mb-2">🏛️ Voz Ativa</h1>
+          <p className="text-gray-400">Tire uma foto e a IA gera o relatório técnico</p>
         </header>
 
         <div className="space-y-6">
+          {/* capture="environment" força a abertura da câmera traseira no celular */}
           <label className="block cursor-pointer bg-blue-600 hover:bg-blue-700 transition p-6 rounded-xl text-center text-lg font-semibold shadow-lg">
             📸 Tirar Foto do Problema
             <input 
@@ -172,58 +97,51 @@ export default function Home() {
             />
           </label>
 
-          {compressionInfo && (
-            <div className="bg-green-900/50 border border-green-500 p-3 rounded-xl text-center">
-              <p className="text-green-200 text-sm">✅ {compressionInfo}</p>
-            </div>
-          )}
-
           {imageUrl && (
             <>
-              <img src={imageUrl} alt="Preview" className="rounded-xl w-full shadow-2xl" />
+              <img src={imageUrl} alt="Preview" className="rounded-xl w-full shadow-2xl max-h-96 object-cover" />
               <button
                 onClick={analyzeImage}
                 disabled={loading}
                 className="w-full bg-green-600 hover:bg-green-700 p-5 rounded-xl font-bold text-lg disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg"
               >
-                {loading ? '🤖 IA analisando...' : '🔍 Analisar com IA'}
+                {loading ? '🤖 Processando no servidor...' : '🔍 Analisar com IA'}
               </button>
             </>
           )}
 
           {error && (
             <div className="bg-red-900/50 border border-red-500 p-4 rounded-xl">
-              <p className="text-red-200">❌ {error}</p>
+              <p className="text-red-200 text-center">❌ {error}</p>
             </div>
           )}
 
           {analysis && (
             <div className="bg-gray-800/80 backdrop-blur p-6 rounded-xl space-y-4 shadow-2xl border border-gray-700">
               <div className="flex justify-between items-start">
-                <h2 className="text-2xl font-bold capitalize">
+                <h2 className="text-xl font-bold capitalize text-white">
                   {analysis.tipo_problema.replace(/_/g, ' ')}
                 </h2>
-                <span className={`px-4 py-2 rounded-full text-sm font-bold ${
+                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
                   analysis.urgencia === 'critico' ? 'bg-red-600' :
                   analysis.urgencia === 'alto' ? 'bg-orange-600' :
                   analysis.urgencia === 'medio' ? 'bg-yellow-600 text-black' : 'bg-green-600'
                 }`}>
                   {analysis.urgencia.toUpperCase()}
                 </span>
-              </div>
+                </div>
               
-              <div className="space-y-3 text-gray-300">
+              <div className="space-y-3 text-sm text-gray-300">
                 <p><strong className="text-white">🏢 Órgão:</strong> {analysis.orgao_responsavel}</p>
-                <p><strong className="text-white">📝 Descrição técnica:</strong> {analysis.descricao_tecnica}</p>
+                <p><strong className="text-white">📝 Descrição:</strong> {analysis.descricao_tecnica}</p>
                 <p className="text-red-400"><strong>⚠️ Risco:</strong> {analysis.risco_se_nao_resolvido}</p>
-                <p className="text-xs text-gray-500">ID: {analysis.id}</p>
               </div>
               
               <button
                 onClick={sendToOrgao}
-                className="w-full bg-purple-600 hover:bg-purple-700 p-5 rounded-xl font-bold text-lg transition shadow-lg"
+                className="w-full bg-purple-600 hover:bg-purple-700 p-4 rounded-xl font-bold text-base transition shadow-lg mt-4"
               >
-                📧 Enviar ao Órgão Responsável
+                📧 Enviar Relatório ao Órgão
               </button>
             </div>
           )}
