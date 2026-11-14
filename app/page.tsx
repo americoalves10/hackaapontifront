@@ -14,7 +14,6 @@ interface Analysis {
 }
 
 export default function Home() {
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [loading, setLoading] = useState(false);
@@ -27,18 +26,14 @@ export default function Home() {
     setError(null);
     setAnalysis(null);
     
-    // Apenas uma validação leve de tamanho (limite de 15MB, suficiente para qualquer celular)
-    if (selectedFile.size > 15 * 1024 * 1024) {
+    // Validação leve
+    if (selectedFile.size > 20 * 1024 * 1024) {
       setError('Foto muito grande. Tente aproximar o celular do objeto.');
       return;
-      }
+    }
     
     setFile(selectedFile);
-    
-    // URL.createObjectURL é APENAS um ponteiro. NÃO carrega a imagem na memória do JS.
-    // É super leve e funciona perfeitamente no mobile.
-    const previewUrl = URL.createObjectURL(selectedFile);
-    setImageUrl(previewUrl);
+    console.log(`📸 Foto selecionada: ${(selectedFile.size / 1024 / 1024).toFixed(2)}MB`);
   };
 
   const analyzeImage = async () => {
@@ -47,22 +42,27 @@ export default function Home() {
     setError(null);
 
     const formData = new FormData();
-    // Envia o arquivo cru. O backend vai cuidar de comprimir com segurança.
     formData.append('image', file);
 
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      console.log('📤 Enviando foto para o servidor...');
+      
       const { data } = await axios.post(`${apiUrl}/reports/analyze`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 30000, // 30 segundos
+        timeout: 30000,
       });
+      
+      console.log('✅ Análise recebida:', data);
       setAnalysis(data);
     } catch (err: any) {
-      console.error(err);
+      console.error('❌ Erro:', err);
       if (err.code === 'ECONNABORTED') {
         setError('Tempo esgotado. Verifique sua conexão.');
+      } else if (err.response?.status === 413) {
+        setError('Foto muito grande para o servidor.');
       } else {
-        setError('Erro ao analisar. Tente tirar a foto novamente.');
+        setError('Erro ao analisar. Tente novamente.');
       }
     } finally {
       setLoading(false);
@@ -85,7 +85,6 @@ export default function Home() {
         </header>
 
         <div className="space-y-6">
-          {/* capture="environment" força a abertura da câmera traseira no celular */}
           <label className="block cursor-pointer bg-blue-600 hover:bg-blue-700 transition p-6 rounded-xl text-center text-lg font-semibold shadow-lg">
             📸 Tirar Foto do Problema
             <input 
@@ -97,17 +96,18 @@ export default function Home() {
             />
           </label>
 
-          {imageUrl && (
-            <>
-              <img src={imageUrl} alt="Preview" className="rounded-xl w-full shadow-2xl max-h-96 object-cover" />
+          {file && (
+            <div className="bg-green-900/50 border border-green-500 p-4 rounded-xl text-center">
+              <p className="text-green-200 font-semibold">✅ Foto selecionada!</p>
+              <p className="text-green-300 text-sm">Tamanho: {(file.size / 1024 / 1024).toFixed(2)}MB</p>
               <button
                 onClick={analyzeImage}
                 disabled={loading}
-                className="w-full bg-green-600 hover:bg-green-700 p-5 rounded-xl font-bold text-lg disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg"
+                className="w-full mt-4 bg-green-600 hover:bg-green-700 p-5 rounded-xl font-bold text-lg disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg"
               >
                 {loading ? '🤖 Processando no servidor...' : '🔍 Analisar com IA'}
               </button>
-            </>
+            </div>
           )}
 
           {error && (
@@ -129,7 +129,7 @@ export default function Home() {
                 }`}>
                   {analysis.urgencia.toUpperCase()}
                 </span>
-                </div>
+              </div>
               
               <div className="space-y-3 text-sm text-gray-300">
                 <p><strong className="text-white">🏢 Órgão:</strong> {analysis.orgao_responsavel}</p>
